@@ -10,6 +10,11 @@
 #include <array>
 #include <vector>
 #include <unordered_map>
+#include <string>
+#include <sstream>
+#include <algorithm>
+#include <iterator>
+#include <random>
 
 
 // Functional utilities
@@ -24,9 +29,6 @@ enum class Axis : uint8_t {
     Y,
     Z
 };
-
-// Face order:
-// Top, Left, Front, Right, Back, Bottom
 
 enum class Color : uint8_t {
     White = 0,
@@ -136,22 +138,9 @@ namespace piece {
         return p;
     }
     
-    Piece with_color(Face f, Color c)
-    {
-        Piece p = default_piece();
-        p[static_cast<size_t>(f)] = c;
-        return p;
-    }
-    
     Piece add_default_face(Piece&& p, Face f)
     {
         p[static_cast<size_t>(f)] = default_color(f);
-        return p;
-    }
-    
-    Piece add_color(Piece&& p, Face f, Color c)
-    {
-        p[static_cast<size_t>(f)] = c;
         return p;
     }
     
@@ -189,24 +178,14 @@ namespace piece {
         }
     }
     
-    void print(const Piece& p, std::ostream& os)
-    {
-        os << "  " << to_string(p[0]) << "\n";
-        for (size_t i = 1; i < 5; i++) {
-            os << to_string(p[i]) << " ";
-        }
-        os << "\n";
-        os << "  " << to_string(p[5]) << "\n";
-    }
-    
     std::ostream& print_face(const Piece& p, Face face, std::ostream& os)
     {
         return os << to_string(p[static_cast<size_t>(face)]);
     }
 }
 
-template <size_t Size> using Cube = std::array<Piece, Size * Size * Size>;
-typedef Cube<3> Cube3;
+
+typedef std::vector<Piece> Cube;
 
 
 namespace cube {
@@ -216,132 +195,111 @@ namespace cube {
         size_t x, y, z;
     };
     
-    template<size_t Size>
-    constexpr size_t index(size_t x, size_t y, size_t z)
+    constexpr size_t index(size_t cubeSize, size_t x, size_t y, size_t z)
     {
-        return (z * Size + y) * Size + x;
+        return (z * cubeSize + y) * cubeSize + x;
     }
     
-    template<size_t Size>
-    constexpr size_t index(const Coord& c)
+    constexpr size_t index(size_t cubeSize, const Coord& c)
     {
-        return index<Size>(c.x, c.y, c.z);
+        return index(cubeSize, c.x, c.y, c.z);
     }
     
     typedef std::function<Coord(size_t, size_t)> PlaneToCubeMapping;
     
-    template<size_t Size>
-    PlaneToCubeMapping planeToCube(Layer l)
+    PlaneToCubeMapping planeToCube(size_t cubeSize, Layer l)
     {
-        auto planeToCube = [](size_t begin, int xStride, int yStride) -> PlaneToCubeMapping {
-            return [begin, xStride, yStride](size_t lx, size_t ly) -> Coord {
+        auto planeToCube = [cubeSize](size_t begin, int xStride, int yStride) -> PlaneToCubeMapping {
+            return [begin, xStride, yStride, cubeSize](size_t lx, size_t ly) -> Coord {
                 size_t idx = begin + (ly*yStride) + lx*xStride;
-                size_t z = idx / (Size * Size);
-                size_t layerIdx = idx - z * Size * Size;
-                size_t y = layerIdx / Size;
-                size_t x = layerIdx % Size;
+                size_t z = idx / (cubeSize * cubeSize);
+                size_t layerIdx = idx - z * cubeSize * cubeSize;
+                size_t y = layerIdx / cubeSize;
+                size_t x = layerIdx % cubeSize;
                 return {.x = x, .y = y, .z = z};
             };
         };
         
-        constexpr auto isFirstHalf = [](size_t index) -> bool { return index <= Size / 2; };
-        constexpr auto inverseIndex = [](size_t index) -> size_t { return Size - 1 - index; };
+        auto isFirstHalf = [cubeSize](size_t index) -> bool { return index <= cubeSize / 2; };
+        auto inverseIndex = [cubeSize](size_t index) -> size_t { return cubeSize - 1 - index; };
         
         switch (l.axis) {
             case Axis::X:
-                return planeToCube(isFirstHalf(l.index) ? index<Size>(l.index, 0, 0) : index<Size>(Size - 1 - inverseIndex(l.index), Size - 1, 0),
-                                   (isFirstHalf(l.index) ? 1 : -1) * static_cast<int>(Size),
-                                   Size * Size);
+                return planeToCube(isFirstHalf(l.index) ? index(cubeSize, l.index, 0, 0) : index(cubeSize, cubeSize - 1 - inverseIndex(l.index), cubeSize - 1, 0),
+                                   (isFirstHalf(l.index) ? 1 : -1) * static_cast<int>(cubeSize),
+                                   cubeSize * cubeSize);
             case Axis::Y:
-                return planeToCube(isFirstHalf(l.index) ? index<Size>(0, Size - 1, Size - 1 - l.index) : index<Size>(0, 0, Size - 1 - l.index),
+                return planeToCube(isFirstHalf(l.index) ? index(cubeSize, 0, cubeSize - 1, cubeSize - 1 - l.index) : index(cubeSize, 0, 0, cubeSize - 1 - l.index),
                                    1,
-                                   (isFirstHalf(l.index) ? -1 : 1) * static_cast<int>(Size));
+                                   (isFirstHalf(l.index) ? -1 : 1) * static_cast<int>(cubeSize));
             case Axis::Z:
-                return planeToCube(isFirstHalf(l.index) ? index<Size>(0, Size - 1 - l.index, 0) : index<Size>(Size - 1, Size - 1 - l.index, 0),
+                return planeToCube(isFirstHalf(l.index) ? index(cubeSize, 0, cubeSize - 1 - l.index, 0) : index(cubeSize, cubeSize - 1, cubeSize - 1 - l.index, 0),
                                    isFirstHalf(l.index) ? 1 : -1,
-                                   Size * Size);
+                                   cubeSize * cubeSize);
         }
     }
     
-    template<size_t Size>
-    Cube<Size> default_cube()
+    Cube default_cube(size_t cubeSize)
     {
-        typedef typename Cube<Size>::iterator CubeIterator;
-        auto createRow = [](CubeIterator rowBegin, bool hasTopOrBottom, Face topOrBottom, bool hasFrontOrBack, Face frontOrBack) {
-            CubeIterator rowIt = rowBegin;
-            
+        typedef typename Cube::iterator CubeIterator;
+        auto createRow = [cubeSize](CubeIterator rowBegin, bool hasTopOrBottom, Face topOrBottom, bool hasFrontOrBack, Face frontOrBack) {
             // Left
-            *rowIt = piece::default_face(Face::Left);
-            if (hasFrontOrBack) {
-                *rowIt = piece::add_default_face(std::move(*rowIt), frontOrBack);
-            }
-            rowIt++;
-            
-            // Middle
-            for (size_t i = 1; i < Size - 1; i++, rowIt++) {
-                if (hasFrontOrBack) {
-                    *rowIt = piece::add_default_face(std::move(*rowIt), frontOrBack);
-                }
-            }
-            
+            *rowBegin = piece::default_face(Face::Left);
             // Right
-            *rowIt = piece::default_face(Face::Right);
+            *(rowBegin + cubeSize - 1) = piece::default_face(Face::Right);
+            
             if (hasFrontOrBack) {
-                *rowIt = piece::add_default_face(std::move(*rowIt), frontOrBack);
+                // Left
+                *rowBegin = piece::add_default_face(std::move(*rowBegin), frontOrBack);
+                // Middle
+                for (size_t i = 1; i < cubeSize - 1; i++) {
+                    *(rowBegin + i) = piece::add_default_face(std::move(*(rowBegin + i)), frontOrBack);
+                }
+                // Right
+                *(rowBegin + cubeSize - 1) = piece::add_default_face(std::move(*(rowBegin + cubeSize - 1)), frontOrBack);
             }
             
-
             if (hasTopOrBottom) {
-                rowIt = rowBegin;
-                for (size_t i = 0; i < Size; i++, rowIt++) {
-                    *rowIt = piece::add_default_face(std::move(*rowIt), topOrBottom);
+                for (size_t i = 0; i < cubeSize; i++) {
+                    *(rowBegin + i) = piece::add_default_face(std::move(*(rowBegin + i)), topOrBottom);
                 }
             }
         };
         
-        auto rowIterator = [](Cube<Size>& c, size_t y, size_t z) -> CubeIterator {
-            return c.begin() + index<Size>(0, y, z);
+        auto rowIterator = [cubeSize](Cube& c, size_t y, size_t z) -> CubeIterator {
+            return c.begin() + index(cubeSize, 0, y, z);
         };
         
-        Cube<Size> cube;
-        cube.fill(piece::default_piece());
+        auto createLayer = [createRow, rowIterator, cubeSize](Cube& cube, size_t z, bool hasTopOrBottom, Face topOrBottom) {
+            createRow(rowIterator(cube, 0, z), hasTopOrBottom, topOrBottom, true, Face::Back);
+            for (size_t y = 1; y < cubeSize - 1; y++) {
+                createRow(rowIterator(cube, y, z), hasTopOrBottom, topOrBottom, false, Face::Back);
+            }
+            createRow(rowIterator(cube, cubeSize - 1, z), hasTopOrBottom, topOrBottom, true, Face::Front);
+            
+        };
+        
+        Cube cube(cubeSize*cubeSize*cubeSize, piece::default_piece());
         
         // Top layer
-        size_t z = 0;
-        createRow(rowIterator(cube, 0, z), true, Face::Top, true, Face::Back);
-        for (size_t y = 1; y < Size - 1; y++) {
-            createRow(rowIterator(cube, y, z), true, Face::Top, false, Face::Back);
-        }
-        createRow(rowIterator(cube, Size - 1, z), true, Face::Top, true, Face::Front);
-        
+        createLayer(cube, 0, true, Face::Top);
         // Middle layers
-        for (z = 1; z < Size - 1; z++) {
-            createRow(rowIterator(cube, 0, z), false, Face::Top, true, Face::Back);
-            for (size_t y = 1; y < Size; y++) {
-                createRow(rowIterator(cube, y, z), false, Face::Top, false, Face::Back);
-            }
-            createRow(rowIterator(cube, Size - 1, z), false, Face::Top, true, Face::Front);
+        for (size_t z = 1; z < cubeSize - 1; z++) {
+            createLayer(cube, z, false, Face::Top);
         }
-
         // Bottom layer
-        z = Size - 1;
-        createRow(rowIterator(cube, 0, z), true, Face::Bottom, true, Face::Back);
-        for (size_t y = 1; y < Size; y++) {
-            createRow(rowIterator(cube, y, z), true, Face::Bottom, false, Face::Back);
-        }
-        createRow(rowIterator(cube, Size - 1, z), true, Face::Bottom, true, Face::Front);
+        createLayer(cube, cubeSize - 1, true, Face::Bottom);
         
         return cube;
     }
     
-    template<size_t Size>
-    bool validate(const Cube<Size>& cube)
+    bool validate(size_t cubeSize, const Cube& cube)
     {
-        auto validateSide = [&cube](PlaneToCubeMapping plane2Cube, Face face) -> bool {
-            for (size_t y = 0; y < Size; y++) {
-                for (size_t x = 0; x < Size; x++) {
-                    const Piece& p = cube[index<Size>(plane2Cube(x, y))];
-                    if (!piece::has(p, face)) {
+        auto validateSide = [&cube, cubeSize](PlaneToCubeMapping plane2Cube, Face face) -> bool {
+            for (size_t y = 0; y < cubeSize; y++) {
+                for (size_t x = 0; x < cubeSize; x++) {
+                    const Piece& p = cube[index(cubeSize, plane2Cube(x, y))];
+                    if (p[static_cast<size_t>(face)] != default_color(face)) {
                         return false;
                     }
                 }
@@ -349,111 +307,198 @@ namespace cube {
             return true;
         };
         
-        return all(validateSide(planeToCube<Size>(layer(Face::Top, Size)), Face::Top),
-                   validateSide(planeToCube<Size>(layer(Face::Left, Size)), Face::Left),
-                   validateSide(planeToCube<Size>(layer(Face::Front, Size)), Face::Front),
-                   validateSide(planeToCube<Size>(layer(Face::Right, Size)), Face::Right),
-                   validateSide(planeToCube<Size>(layer(Face::Back, Size)), Face::Back),
-                   validateSide(planeToCube<Size>(layer(Face::Bottom, Size)), Face::Bottom));
+        return all(validateSide(planeToCube(cubeSize, layer(Face::Top, cubeSize)), Face::Top),
+                   validateSide(planeToCube(cubeSize, layer(Face::Left, cubeSize)), Face::Left),
+                   validateSide(planeToCube(cubeSize, layer(Face::Front, cubeSize)), Face::Front),
+                   validateSide(planeToCube(cubeSize, layer(Face::Right, cubeSize)), Face::Right),
+                   validateSide(planeToCube(cubeSize, layer(Face::Back, cubeSize)), Face::Back),
+                   validateSide(planeToCube(cubeSize, layer(Face::Bottom, cubeSize)), Face::Bottom));
     }
     
-    template<size_t Size>
-    Cube<Size> rotate(Cube<Size>&& cube, Layer layer, bool clockwise)
+    Cube rotate(size_t cubeSize, Cube&& cube, Layer layer, bool clockwise)
     {
         // 1. First rotate the layer
-        PlaneToCubeMapping mapping = planeToCube<Size>(layer);
+        PlaneToCubeMapping mapping = planeToCube(cubeSize, layer);
         //   1.a First flip
         if (clockwise) {
             // Flip vertically
-            for (size_t y = 0; y < Size/2; y++) {
-                for (size_t x = 0; x < Size; x++) {
-                    std::swap(cube[index<Size>(mapping(x, y))], cube[index<Size>(mapping(x, Size - 1 - y))]);
+            for (size_t y = 0; y < cubeSize/2; y++) {
+                for (size_t x = 0; x < cubeSize; x++) {
+                    std::swap(cube[index(cubeSize, mapping(x, y))], cube[index(cubeSize, mapping(x, cubeSize - 1 - y))]);
                 }
             }
         } else {
             // Flip horizontally
-            for (size_t y = 0; y < Size; y++) {
-                for (size_t x = 0; x < Size/2; x++) {
-                    std::swap(cube[index<Size>(mapping(x, y))], cube[index<Size>(mapping(Size - 1 - x, y))]);
+            for (size_t y = 0; y < cubeSize; y++) {
+                for (size_t x = 0; x < cubeSize/2; x++) {
+                    std::swap(cube[index(cubeSize, mapping(x, y))], cube[index(cubeSize, mapping(cubeSize - 1 - x, y))]);
                 }
             }
         }
         
         //   1.b Transpose
-        for (size_t y = 0; y < Size - 1; y++) {
-            for (size_t x = y + 1; x < Size; x++) {
-                std::swap(cube[index<Size>(mapping(x, y))], cube[index<Size>(mapping(y, x))]);
+        for (size_t y = 0; y < cubeSize - 1; y++) {
+            for (size_t x = y + 1; x < cubeSize; x++) {
+                std::swap(cube[index(cubeSize, mapping(x, y))], cube[index(cubeSize, mapping(y, x))]);
             }
         }
         
         // 2. Then rotate all the pieces in the layer
-        const bool clockwisePiece = (layer.index <= Size/2);
-        for (size_t y = 0; y < Size; y++) {
-            for (size_t x = 0; x < Size; x++) {
-                cube[index<Size>(mapping(x, y))] = piece::rotate(std::move(cube[index<Size>(mapping(x, y))]), layer.axis, clockwisePiece ? clockwise : !clockwise);
+        const bool clockwisePiece = (layer.index <= cubeSize/2);
+        for (size_t y = 0; y < cubeSize; y++) {
+            for (size_t x = 0; x < cubeSize; x++) {
+                cube[index(cubeSize, mapping(x, y))] = piece::rotate(std::move(cube[index(cubeSize, mapping(x, y))]), layer.axis, clockwisePiece ? clockwise : !clockwise);
             }
         }
         
         return cube;
     }
 
-    template<size_t Size>
-    std::ostream& print(const Cube<Size>& cube, std::ostream& os)
+    std::ostream& print(size_t cubeSize, const Cube& cube, std::ostream& os)
     {
-        auto printRow = [](const Cube<Size>& cube, std::ostream& os, size_t spaces, size_t row, Face face) -> std::ostream& {
-            PlaneToCubeMapping mapping = planeToCube<Size>(layer(face, Size));
+        auto printRow = [cubeSize](const Cube& cube, std::ostream& os, size_t spaces, size_t row, Face face) -> std::ostream& {
+            PlaneToCubeMapping mapping = planeToCube(cubeSize, layer(face, cubeSize));
             for (size_t s = 0; s < spaces; s++) os << " ";
-            for (size_t x = 0; x < Size; x++) {
-                const Piece& p = cube[index<Size>(mapping(x, row))];
+            for (size_t x = 0; x < cubeSize; x++) {
+                const Piece& p = cube[index(cubeSize, mapping(x, row))];
                 piece::print_face(p, face, os) << " ";
             }
             return os;
         };
         
-        for (size_t y = 0; y < Size; y++) {
-            printRow(cube, os, Size*2, y, Face::Top) << "\n";
+        for (size_t y = 0; y < cubeSize; y++) {
+            printRow(cube, os, cubeSize*2, y, Face::Top) << "\n";
         }
-        for (size_t y = 0; y < Size; y++) {
+        for (size_t y = 0; y < cubeSize; y++) {
             printRow(cube, os, 0, y, Face::Left);
             printRow(cube, os, 0, y, Face::Front);
             printRow(cube, os, 0, y, Face::Right);
             printRow(cube, os, 0, y, Face::Back);
             os << "\n";
         }
-        for (size_t y = 0; y < Size; y++) {
-            printRow(cube, os, Size*2, y, Face::Bottom) << "\n";
+        for (size_t y = 0; y < cubeSize; y++) {
+            printRow(cube, os, cubeSize*2, y, Face::Bottom) << "\n";
         }
         return os;
     }
 }
 
-int main(int argc, const char * argv[]) {
+Cube perform(size_t cubeSize, const std::string& moves)
+{
+    std::vector<std::string> tokens;
+    std::istringstream iss(moves);
+    std::copy(std::istream_iterator<std::string>(iss),
+              std::istream_iterator<std::string>(),
+              std::back_inserter(tokens));
     
-    Piece p = piece::add_color(piece::add_color(piece::with_color(Face::Top, Color::White), Face::Front, Color::Green), Face::Left, Color::Orange);
-    piece::print(p, std::cout);
-    p = piece::rotate(std::move(p), Axis::X, true);
-    p = piece::rotate(std::move(p), Axis::X, true);
-    piece::print(p, std::cout);
-    
-    constexpr size_t kCubeSize = 3;
-    Cube<kCubeSize> c = cube::default_cube<kCubeSize>();
-    int a = 2;
-    
-    cube::PlaneToCubeMapping tm = cube::planeToCube<kCubeSize>(layer_equator(kCubeSize));
-    for (size_t y = 0; y < kCubeSize; y++) {
-        for (size_t x = 0; x < kCubeSize; x++) {
-            cube::Coord c = tm(x, y);
-            printf("(%d, %d) -> (%d, %d, %d)\n", x, y, c.x, c.y, c.z);
+    auto performMove = [cubeSize](const char& move, bool clockwise, Cube&& cube) -> Cube {
+        switch (move) {
+            case 'F':
+                return cube::rotate(cubeSize, std::move(cube), layer_front(cubeSize), clockwise);
+            case 'U':
+                return cube::rotate(cubeSize, std::move(cube), layer_top(cubeSize), clockwise);
+            case 'R':
+                return cube::rotate(cubeSize, std::move(cube), layer_right(cubeSize), clockwise);
+            case 'B':
+                return cube::rotate(cubeSize, std::move(cube), layer_back(cubeSize), clockwise);
+            case 'L':
+                return cube::rotate(cubeSize, std::move(cube), layer_left(cubeSize), clockwise);
+            case 'D':
+                return cube::rotate(cubeSize, std::move(cube), layer_bottom(cubeSize), clockwise);
+            default:
+                return std::move(cube);
         }
+    };
+    
+    auto computeMove = [performMove](const std::string& move, Cube&& cube) -> Cube {
+        if (move.size() == 1) {
+            return performMove(move[0], true, std::move(cube));
+        } else {
+            if (move[1] == '\'') {
+                return performMove(move[0], false, std::move(cube));
+            } else if (move[1] == '2') {
+                return performMove(move[0], true, performMove(move[0], true, std::move(cube)));
+            }
+        }
+        return std::move(cube);
+    };
+    
+    Cube c = cube::default_cube(cubeSize);
+    
+    for (const std::string& move : tokens) {
+        c = computeMove(move, std::move(c));
     }
     
-    std::cout << "Valid: " << cube::validate<kCubeSize>(c) << "\n";
+    return c;
+}
+
+std::string random_moves(size_t cubeSize, size_t length)
+{
+    std::random_device rd;
+    auto randomLayer = [cubeSize, &rd](std::stringstream& os) -> std::string {
+        if (cubeSize > 3) {
+            // TODO
+//            std::uniform_int_distribution<int> dist(0, cubeSize);
+        }
+        std::uniform_int_distribution<int> dist(0, 5);
+        int layer = dist(rd);
+        switch (layer) {
+            case 0:
+                return "L";
+            case 1:
+                return "R";
+            case 2:
+                return "D";
+            case 3:
+                return "T";
+            case 4:
+                return "F";
+            case 5:
+                return "B";
+            default:
+                return "";
+        }
+    };
     
-    c = cube::rotate<kCubeSize>(std::move(c), layer_back(kCubeSize), false);
+    auto randomTurn = [&rd](std::stringstream& os) -> std::string {
+        std::uniform_int_distribution<int> dist(0, 3);
+        int turn = dist(rd);
+        switch (turn) {
+            case 0:
+                return "";
+            case 1:
+                return "'";
+            case 2:
+                return "2";
+            default:
+                return "";
+        }
+    };
     
-    cube::print<kCubeSize>(c, std::cout);
+    std::stringstream ss;
+    for (size_t i = 0; i < length; i++) {
+        ss << randomLayer(ss) << randomTurn(ss) << " ";
+    }
+    return ss.str();
+}
+
+void printHelp()
+{
+    std::cerr << "Usage: cube [cube size] [scramble length]" << std::endl;
+}
+
+int main(int argc, const char * argv[]) {
+    if (argc < 3) {
+        printHelp();
+        return 1;
+    }
     
-    std::cout << "Valid: " << cube::validate<kCubeSize>(c) << "\n";
+    size_t cubeSize = std::stoull(std::string(argv[1]));
+    size_t scrambleLength = std::stoull(std::string(argv[2]));
     
+    std::string scramble_instructions = random_moves(3, scrambleLength);
+    std::cout << scramble_instructions << "\n\n";
+    Cube c = perform(cubeSize, scramble_instructions);
+    cube::print(cubeSize, c, std::cout);
     return 0;
 }
